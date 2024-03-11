@@ -1,4 +1,4 @@
-# imagetracer.py
+# imagetracer.py 0.2
 This is Experiment version,Work in progress,  
 It based on Imagetracer.js 1.2.6  
 https://github.com/jankovicsandras/imagetracerjs
@@ -15,6 +15,4 @@ It is nessesary import Pillow and addict library
 https://github.com/mewwts/addict  
 https://github.com/python-pillow/Pillow  
   
-
-
 Thanks to each libraries authors!
