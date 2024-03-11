@@ -3,7 +3,7 @@ This is Experiment version,Work in progress,
 It based on Imagetracer.js 1.2.6  
 https://github.com/jankovicsandras/imagetracerjs
 
-Writtern by Python3,and It is not dependent to Node.js.
+Writtern by Python3,and It is not dependent to Node.js.  
 But it's not a complete port yet.  
 So,it is not suitable for practical use yet.  
   
