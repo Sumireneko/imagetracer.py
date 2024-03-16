@@ -1,8 +1,10 @@
-import collections
 import math,random,os,copy,time,sys
+from math import floor,ceil,sqrt
+from random import randint
 from PIL import Image
 from io import BytesIO
 from addict import Dict
+from functools import lru_cache
 
 '''
     imagetracer.py version 0.0 Work in Progress
@@ -54,8 +56,6 @@ if len(args)>0:
     if len(args)>2 and len(args[2])>0:
         option_name = args[2]
 
-
-
 class ImageToSVGConverter():
 
     def __init__(self):
@@ -63,25 +63,26 @@ class ImageToSVGConverter():
         self.optionpresets = Dict({
             'default':{
                 'corsenabled': False,
-                'ltres': 0.49,
-                'qtres': 1.2,
-                'pathomit':4,
+                'ltres': 0.05,
+                'qtres': 0.98,
+                'pathomit':1,
                 'rightangleenhance': True,
                 'colorsampling': 0,
-                'numberofcolors':32,
+                'numberofcolors':14,
                 'mincolorratio': 0,
-                'colorquantcycles':8,
-                'layering': 0,
-                'strokewidth': 0,
-                'linefilter': False,
+                'colorquantcycles':1,
+                'layering': 1,
+                'strokewidth':0.0,
+                'linefilter': True,
+                'lineart': False,
                 'scale': 1,
-                'roundcoords':4,
+                'roundcoords':8,
                 'viewbox': True,
                 'desc': False,
                 'lcpr': 0,
                 'qcpr': 0,
-                'blurradius': 4,
-                'blurdelta': 5
+                'blurradius': 0,
+                'blurdelta': 2
                 },
             'default2':{
                 'corsenabled': False,
@@ -447,6 +448,7 @@ class ImageToSVGConverter():
         h = imgd.height
         pixelnum = w * h
         palette = Dict()
+        copy_deepcopy = copy.deepcopy
         
         # imgd.data must be RGBA, not just RGB
         if len(imgd.data) < pixelnum * 4:
@@ -455,10 +457,11 @@ class ImageToSVGConverter():
             #newimgddata = np.array(([0] * alloc),dtype='uint8') # Uint8,  ClampedArray?
             for pxcnt in range(0,pixelnum):
                 imgq = imgd.data[pxcnt*3:pxcnt*3+3]
-                newimgddata[pxcnt * 4] = imgq[0]
-                newimgddata[pxcnt * 4 + 1] = imgq[1]
-                newimgddata[pxcnt * 4 + 2] = imgq[2]
-                newimgddata[pxcnt * 4 + 3] = 255
+                p4 = pxcnt*4
+                newimgddata[p4] = imgq[0]
+                newimgddata[p4 + 1] = imgq[1]
+                newimgddata[p4 + 2] = imgq[2]
+                newimgddata[p4 + 3] = 255
             imgd.data = newimgddata
         # End of RGBA imgd.data check
         # Filling arr (color index array) with -1
@@ -468,14 +471,11 @@ class ImageToSVGConverter():
         
         # Use custom palette if pal is defined or sample / generate custom length palette
         # parette is Dict() object
-        if options.pal:
-            palette = options.pal
-        elif options.colorsampling == 0:
-            palette = self.generatepalette(options.numberofcolors)
-        elif options.colorsampling == 1:
-            palette = self.samplepalette(options.numberofcolors, imgd)
-        else:
-            palette = self.samplepalette2(options.numberofcolors, imgd)
+        if options.pal:palette = options.pal
+        elif options.colorsampling == 0:palette = self.generatepalette(options.numberofcolors)
+        elif options.colorsampling == 1:palette = self.samplepalette(options.numberofcolors, imgd)
+        else:palette = self.samplepalette2(options.numberofcolors, imgd)
+        
         # Selective Gaussian blur preprocessing
         if options.blurradius > 0:
             imgd = self.blur( imgd, options.blurradius, options.blurdelta )
@@ -488,66 +488,59 @@ class ImageToSVGConverter():
         
         cycle_limit = options.colorquantcycles - 1
         min_col_ratio = options.mincolorratio
-        
+        plen = len(palette)
         for cnt in range(0,options.colorquantcycles):
             # Average colors from the second iteration
             if cnt > 0:
                 # This indent fixed
                 # Reseting palette accumulator for averaging
-                paletteacc=copy.deepcopy(idt_palette)
+                paletteacc = copy_deepcopy(idt_palette)
                 # averaging paletteacc for palette
                 for k in range(0, len(palette)):
                     # averaging
                     #print( paletteacc )
                     kpal = paletteacc[k]
-                    if kpal.n > 0:
-                        n=kpal.n
-                        palette[k] = Dict({
-                            'r': math.floor(kpal.r / n),
-                            'g': math.floor(kpal.g / n),
-                            'b': math.floor(kpal.b / n),
-                            'a': math.floor(kpal.a / n)
-                            })
+                    n = kpal.n
+                    if n > 0:
+                        palette[k] = self.ret_pal(kpal.r,kpal.g,kpal.b,kpal.a,n)
+
                     # Randomizing a color, if there are too few pixels and there will be a new cycle len(paletteacc[k])>0 and 
-                    if ((kpal.n / pixelnum) < min_col_ratio) and (cnt < cycle_limit):
+                    if (n / pixelnum < min_col_ratio) and (cnt < cycle_limit):
                         palette[k] =Dict({
-                            'r': math.floor(random.randint(0, 255)),
-                            'g': math.floor(random.randint(0, 255)),
-                            'b': math.floor(random.randint(0, 255)),
-                            'a': math.floor(random.randint(0, 255))
+                            'r': floor(randint(0, 255)),
+                            'g': floor(randint(0, 255)),
+                            'b': floor(randint(0, 255)),
+                            'a': floor(randint(0, 255))
                             })
             # End of palette loop
             # End of Average colors from the second iteration
             # Reseting palette accumulator for averaging
+            print('Quantize Cycle',cnt,"_",time.time() - st)
             
-            paletteacc=copy.deepcopy(idt_palette)
+            paletteacc=copy_deepcopy(idt_palette)
+
             for ｊ in range(0,h):
                 for i in range(0,w):
                     # pixel index
                     idx = (j * w + i) * 4
                     # find closest color from palette by measuring (rectilinear) color distance between this pixel and all palette colors
                     ci = cd = 0;cdl = 1024;# 4 * 256 is the maximum RGBA distance 
-                    imgq = imgd.data[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
+                    q0,q1,q2,q3 = imgd.data[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
 
-                    for k in range(0,len(palette)):
+                    for k in range(0,plen):
                         # In my experience, https://en.wikipedia.org/wiki/Rectilinear_distance works better than https://en.wikipedia.org/wiki/Euclidean_distance
                         kpal = palette[k]
-                        kd_r=[kpal.r, imgq[0]];kd_g=[kpal.g, imgq[1]];
-                        kd_b=[kpal.b, imgq[2]];kd_a=[kpal.a, imgq[3]];
-                        
-                        c1 = max(kd_r) - min(kd_r)
-                        c2 = max(kd_g) - min(kd_g)
-                        c3 = max(kd_b) - min(kd_b)
-                        c4 = max(kd_a) - min(kd_a)
-                        cd = int(c1) + int(c2) + int(c3) + int(c4)
+
+                        cd = self.min_max(kpal.r,kpal.g,kpal.b,kpal.a,q0,q1,q2,q3)
+
                         # Remember this color if this is the closest yet
                         if cd < cdl:cdl = cd;ci = k;
                     # End of palette loop
                     # add to palettacc
-                    paletteacc[ci].r += imgq[0]
-                    paletteacc[ci].g += imgq[1]
-                    paletteacc[ci].b += imgq[2]
-                    paletteacc[ci].a += imgq[3]
+                    paletteacc[ci].r += q0
+                    paletteacc[ci].g += q1
+                    paletteacc[ci].b += q2
+                    paletteacc[ci].a += q3
                     paletteacc[ci].n += 1
                     # update the indexed color array
                     arr[j + 1][i + 1] = ci
@@ -555,13 +548,28 @@ class ImageToSVGConverter():
                 # End of j loop
         # End of cnt loop
         return Dict({ 'array':arr, 'palette':palette })
-        
+
+    @lru_cache(maxsize=1000)
+    def ret_pal(self,r,g,b,a,n):
+        return Dict({
+            'r': floor(r / n),
+            'g': floor(g / n),
+            'b': floor(b / n),
+            'a': floor(a / n)
+            })
+
+
+    @lru_cache(maxsize=1024)
+    def min_max(self,r,g,b,a,q0,q1,q2,q3):
+        c1 = (max([r, q0]) - min([r, q0]))+(max([g, q1]) - min([g, q1]))+(max([b, q2]) - min([b, q2]))+(max([a, q3]) - min([a, q3]))
+        return int(c1)
+
     # Sampling a palette from imagedata
-    def samplepalette(self,numberofcolors, imgd ):
+    def samplepalette(self,numberofcolors,imgd):
         idx,palette = 0,Dict()
         imgseed = len(imgd.data)/4
         for i in range(0,numberofcolors):
-            idx = math.floor(random.randint(0, imgseed)) * 4
+            idx = floor(randint(0, imgseed)) * 4
             imgq = imgd.data[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
             palette[i]=Dict({
                 'r': imgq[0],
@@ -572,12 +580,12 @@ class ImageToSVGConverter():
         return palette
 
     # Deterministic sampling a palette from imagedata: rectangular grid
-    def samplepalette2(self,numberofcolors, imgd ):
+    def samplepalette2(self,numberofcolors,imgd):
         idx = 0
         pdx = 0
         palette = Dict()
-        ni = math.ceil(math.sqrt(numberofcolors))
-        nj = math.ceil(numberofcolors / ni)
+        ni = ceil(sqrt(numberofcolors))
+        nj = ceil(numberofcolors / ni)
         vx = imgd.width / (ni + 1)
         vy = imgd.height / (nj + 1)
         w = imgd.width
@@ -587,7 +595,7 @@ class ImageToSVGConverter():
                 if l == numberofcolors:
                     break
                 else:
-                    idx = math.floor((j + 1) * vy * w + (i + 1) * vx) * 4
+                    idx = floor((j + 1) * vy * w + (i + 1) * vx) * 4
                     imgq = imgd.data[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
                     palette[pdx]=Dict({
                         'r': imgq[0],
@@ -604,7 +612,7 @@ class ImageToSVGConverter():
         rcnt = 0;gcnt = 0;bcnt = 0;
         if numberofcolors < 8:
             # Grayscale
-            graystep = math.floor(255 / (numberofcolors - 1))
+            graystep = floor(255 / (numberofcolors - 1))
             i = 0
             for i in range(0,numberofcolors):
                 palette[i]=Dict({
@@ -615,8 +623,10 @@ class ImageToSVGConverter():
                     })
         else:
             # RGB color cube
-            colorqnum = math.floor(numberofcolors ** (1 / 3))
-            colorstep = math.floor(255 / (colorqnum - 1))
+            colorqnum = floor(numberofcolors ** (1 / 3))
+            gstep = colorqnum - 1
+            if gstep == 0:gstep = 1
+            colorstep = floor(255 / gstep)
             rndnum = numberofcolors - colorqnum * colorqnum * colorqnum
             # number of random colors
             pdx = 0;
@@ -636,10 +646,10 @@ class ImageToSVGConverter():
             # Rest is random
             for rcnt in range(0,rndnum):
                 palette[pdx]=Dict({
-                    'r': math.floor(random.randint(0, 255)),
-                    'g': math.floor(random.randint(0, 255)),
-                    'b': math.floor(random.randint(0, 255)),
-                    'a': math.floor(random.randint(0, 255))
+                    'r': floor(randint(0, 255)),
+                    'g': floor(randint(0, 255)),
+                    'b': floor(randint(0, 255)),
+                    'a': floor(randint(0, 255))
                 })
                 pdx+=1
         # End of numberofcolors check
@@ -653,12 +663,14 @@ class ImageToSVGConverter():
 
     def layering(self,ii):
         # Creating layers for each indexed color in arr
+        # This function use when layer = 1 (Old way)
         layers = []
         val = 0
         ah = len(ii.array)
         aw = len(ii.array[0])
         ak = len(ii.palette)
-        n1,n2,n3,n4,n5,n6,n7,n8 = 0,0,0,0,0,0,0,0
+
+        n1=n2=n3=n4=n5=n6=n7=n8=0
         # Create layers
         k = 0
         
@@ -670,20 +682,21 @@ class ImageToSVGConverter():
             for i in range(1,aw-1):
                 # This pixel's indexed color
                 val = ii.array[j][i]
+                
                 # Are neighbor pixel colors the same?
                 n1 = 1 if ii.array[j - 1][i - 1] == val else 0
-                n2 = 1 if ii.array[j - 1][i] == val else 0
+                n2 = 1 if ii.array[j - 1][i    ] == val else 0
                 n3 = 1 if ii.array[j - 1][i + 1] == val else 0
-                n4 = 1 if ii.array[j][i - 1] == val else 0
-                n5 = 1 if ii.array[j][i + 1] == val else 0
+                n4 = 1 if ii.array[j    ][i - 1] == val else 0
+                n5 = 1 if ii.array[j    ][i + 1] == val else 0
                 n6 = 1 if ii.array[j + 1][i - 1] == val else 0
-                n7 = 1 if ii.array[j + 1][i] == val else 0
+                n7 = 1 if ii.array[j + 1][i    ] == val else 0
                 n8 = 1 if ii.array[j + 1][i + 1] == val else 0
                 # this pixel's type and looking back on previous pixels
                 layers[val][j + 1][i + 1] = 1 + n5 * 2 + n8 * 4 + n7 * 8
-                if not n4:layers[val][j + 1][i] = 0 + 2 + n7 * 4 + n6 * 8
-                if not n2:layers[val][j][i + 1] = 0 + n3 * 2 + n5 * 4 + 8
-                if not n1:layers[val][j][i] = 0 + n2 * 2 + 4 + n4 * 8
+                if not n4:layers[val][j + 1][i    ] = 0 + 2 + n7 * 4 + n6 * 8
+                if not n2:layers[val][j    ][i + 1] = 0 + n3 * 2 + n5 * 4 + 8
+                if not n1:layers[val][j    ][i    ] = 0 + n2 * 2 + 4 + n4 * 8
             # End of i loop
         # End of j loop
         return layers
@@ -706,7 +719,7 @@ class ImageToSVGConverter():
         #layer = np.full((ah, aw), 0)
 
         # Looping through all pixels and calculating edge node type
-        c0,c1,c2,c3 = 0,0,0,0
+        c0=c1=c2=c3=0
         for j in range(1,ah):
             for i in range(1,aw):
                 c0 = 1 if ii.array[j - 1][i - 1] == cnum else 0
@@ -722,25 +735,25 @@ class ImageToSVGConverter():
     # Point in polygon test
     def pointinpoly(self,p, pa):
         isin = False
-        max_pa = len(pa)
+        max_pa = len(pa)-1
         for i in range(0,max_pa):
-            j = max_pa - 1
+            if i==0:
+                j = max_pa - 1
+            else:
+                j = i - 1
             pajx = pa[j].x;pajy = pa[j].y;paix = pa[i].x;paiy = pa[i].y;
             
             # zero divide check
             m1 = (pajx - paix) * (p.y - paiy)
             m2 = (pajy - paiy)
             
-            if m1 == 0:#print('zerodiv', f'{pajx} - {paix} * {p.y} - {paiy}')
-                m1 = 0.1
-            if m2 == 0:#print('zerodiv2', f'{pajy} - {paiy}')
-                m2 = 0.1
+            if m1 == 0:m1 = 0.1#print('zerodiv', f'{pajx} - {paix} * {p.y} - {paiy}')
+            if m2 == 0:m2 = 0.1#print('zerodiv2', f'{pajy} - {paiy}') 
             #if pa[i].y > p.y != pa[j].y > p.y and p.x < (pa[j].x - (pa[i].x)) * (p.y - (pa[i].y)) / (pa[j].y - (pa[i].y)) + pa[i].x:
             if ((paiy > p.y) != (pajy > p.y)) and (p.x < (m1 / m2 + paix)):
                 isin = not isin
             else:
                 isin = isin
-            j = i
         return isin
 
     # 3. Walking through an edge node array, discarding edge node types 0 and 15 and creating paths from the rest.
@@ -1080,7 +1093,7 @@ class ImageToSVGConverter():
         smp_seg_max = len(smp.segments)
         ops = options.scale
         # Line filter
-        if (options.linefilter and (smp_seg_max < 3)):return str
+        if (options.linefilter and (smp_seg_max < 3)):return ''
         # print('Segment_Length',smp_seg_max)
         
         # Starting path element, desc contains layer and path number
@@ -1239,8 +1252,13 @@ class ImageToSVGConverter():
     # Convert color object to SVG color string
     def tosvgcolorstr(self,c, options):
         sw = options.strokewidth
+        ld = options.lineart
         op = c.a / 255.0
-        return f'fill="rgb({c.r},{c.g},{c.b})" stroke="rgb({c.r},{c.g},{c.b})" stroke-width="{sw}" opacity="{op}" '
+        
+        if ld == True:
+            if sw <= 0:sw = 1
+            return f'fill="none" stroke="rgb({c.r},{c.g},{c.b})" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
+        return f'fill="rgb({c.r},{c.g},{c.b})" stroke="rgb({c.r},{c.g},{c.b})" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
 
     # HTML Helper function: Appending an <svg> element to a container from an svgstring
     def appendSVGString(svgstr, parentid):
