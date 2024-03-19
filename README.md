@@ -1,4 +1,4 @@
-# imagetracer.py 0.2
+# imagetracer.py 0.3
 This is Experiment version,Work in progress,  
 It based on Imagetracer.js 1.2.6  
 https://github.com/jankovicsandras/imagetracerjs
