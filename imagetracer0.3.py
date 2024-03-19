@@ -1,4 +1,4 @@
-import math,random,os,copy,time,sys
+import math,random,os,copy,time,sys,array
 from math import floor,ceil,sqrt
 from random import randint
 from PIL import Image
@@ -7,7 +7,7 @@ from addict import Dict
 from functools import lru_cache
 
 '''
-    imagetracer.py version 0.0 Work in Progress
+    imagetracer.py version 0.3 Work in Progress
     The script modified for Python3
     Porting by L.Sumireneko.M
     Original author and library is a following.
@@ -68,10 +68,10 @@ class ImageToSVGConverter():
                 'pathomit':1,
                 'rightangleenhance': True,
                 'colorsampling': 0,
-                'numberofcolors':14,
+                'numberofcolors':8,
                 'mincolorratio': 0,
                 'colorquantcycles':1,
-                'layering': 1,
+                'layering': 0,
                 'strokewidth':0.0,
                 'linefilter': True,
                 'lineart': False,
@@ -340,11 +340,12 @@ class ImageToSVGConverter():
        imgd.data = list(np.ravel(nb)) # flatten it 
        print(list(np.ravel(nb)))
        '''
-       raw = list(bin_data.getdata())
-       raw = [list(i) for i in raw] # tuple -> list
-       raw=sum(raw, []) # list -> flat array
-       imgd.data = raw
+       print('bindata: ',time.time() - st)
+              
+       raw = bin_data.getdata() # tuple
+       imgd.data = [ second for first in raw for second in first ] # flatten tuple
        
+       print('Read_Img finshed: ',time.time() - st)
        # set options and make svg data
        options = self.checkoptions(set_option)
        td = self.imagedataToTracedata(imgd, options )
@@ -441,7 +442,7 @@ class ImageToSVGConverter():
     # Using a form of k-means clustering repeatead options.colorquantcycles times. http://en.wikipedia.org/wiki/Color_quantization
 
     def colorquantization(self,imgd, options):
-        arr = []
+        arr = array.array('i',[]);#[]
         idx = 0
         paletteacc = Dict()
         w = imgd.width
@@ -631,12 +632,15 @@ class ImageToSVGConverter():
             # number of random colors
             pdx = 0;
             for rcnt in range(0,colorqnum):
+                rr = rcnt * colorstep
                 for gcnt in range(0,colorqnum):
+                    gg = gcnt * colorstep
                     for bcnt in range(0,colorqnum):
+                        bb = bcnt * colorstep
                         palette[pdx]=Dict({
-                            'r': rcnt * colorstep,
-                            'g': gcnt * colorstep,
-                            'b': bcnt * colorstep,
+                            'r': rr,
+                            'g': gg,
+                            'b': bb,
                             'a': 255
                             })
                         pdx+=1
@@ -762,7 +766,7 @@ class ImageToSVGConverter():
     def pathscan(self,arr, pathomit ):
         
         paths = Dict()
-        pacnt = 0;pcnt = 0;px = 0;py = 0;
+        pacnt=pcnt=px=py=0;
         w = len(arr[0]);h = len(arr);
         dir = 0;pathfinished = True;holepath = False;lookuprow = None;
         for j in range(0,h):
@@ -772,7 +776,7 @@ class ImageToSVGConverter():
                 if (arr_in == 4) or (arr_in == 11):# Other values are not valid
                     # Init
                     py = j;px = i;
-                    paths[pacnt] = Dict({'points' : Dict(), 'boundingbox' : [px,py,px,py],'holechildren':list() })
+                    paths[pacnt] = Dict({'points' : Dict(), 'boundingbox' : [px,py,px,py],'holechildren':[] })
                     pathfinished = False
                     pcnt = 0
                     holepath = True if arr_in == 11 else False
@@ -780,16 +784,20 @@ class ImageToSVGConverter():
                     # Path points loop
                     while not pathfinished:
                         # New path point
-                        #if len(paths[pacnt].points) - 1 < pcnt: pathfinished = False
-                        paths[pacnt].points[pcnt] = Dict({ 'x' : px - 1, 'y' : py - 1, 't': arr[py][px] })
+                        pxbk = px - 1;
+                        pybk = py - 1;
+                        
+                        paths[pacnt].points[pcnt] = Dict({ 'x' : pxbk, 'y' : pybk, 't': arr[py][px] })
+
                         # Bounding box
-                        if (px - 1) < paths[pacnt].boundingbox[0]: paths[pacnt].boundingbox[0] = px - 1
-                        if (px - 1) > paths[pacnt].boundingbox[2]: paths[pacnt].boundingbox[2] = px - 1
-                        if (py - 1) < paths[pacnt].boundingbox[1]: paths[pacnt].boundingbox[1] = py - 1
-                        if (py - 1) > paths[pacnt].boundingbox[3]: paths[pacnt].boundingbox[3] = py - 1
+                        if pxbk < paths[pacnt].boundingbox[0]: paths[pacnt].boundingbox[0] = pxbk
+                        if pxbk > paths[pacnt].boundingbox[2]: paths[pacnt].boundingbox[2] = pxbk
+                        if pybk < paths[pacnt].boundingbox[1]: paths[pacnt].boundingbox[1] = pybk
+                        if pybk > paths[pacnt].boundingbox[3]: paths[pacnt].boundingbox[3] = pybk
                         # Next: look up the replacement, direction and coordinate changes = clear this cell, turn if required, walk forward
                         lookuprow = self.pathscan_combined_lookup[arr[py][px]][dir]
-                        # This is updated arr[py(j)][px(i)]
+                        
+                        # This is updated px,py, arr[py(j)][px(i)]
                         arr[py][px] = lookuprow[0];dir = lookuprow[1];px += lookuprow[2];py += lookuprow[3];
                         
                         # Close path
@@ -806,10 +814,9 @@ class ImageToSVGConverter():
                                 if holepath == True:
                                     parentidx = 0
                                     parentbbox = [-1,-1,w+1,h+1]
-                                    parentcnt = 0
                                     for parentcnt in range(0,pacnt):
-                                        prc = list(paths[parentcnt].boundingbox)
-                                        pc = list(paths[pacnt].boundingbox)
+                                        prc = paths[parentcnt].boundingbox # list()
+                                        pc = paths[pacnt].boundingbox # list()
                                         pts0 = paths[pacnt].points[0] # Dict()
                                         pts = paths[parentcnt].points # Dict()
                                         if (not paths[parentcnt].isholepath) and self.boundingboxincludes(prc, pc) and self.boundingboxincludes(parentbbox, prc) and self.pointinpoly(pts0, pts):
