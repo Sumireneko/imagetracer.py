@@ -7,7 +7,7 @@ from addict import Dict
 from functools import lru_cache
 
 '''
-    imagetracer.py version 0.4 Work in Progress
+    imagetracer.py version 0.41 Work in Progress
     The script modified for Python3
     Porting by L.Sumireneko.M
     Original author and library is a following.
@@ -63,12 +63,12 @@ class ImageToSVGConverter():
         self.optionpresets = Dict({
             'default':{
                 'corsenabled': False,
-                'ltres': 0.05,
-                'qtres': 2.0,
+                'ltres': 5,
+                'qtres': 8.0,
                 'pathomit':8,
                 'rightangleenhance': False,
-                'colorsampling': 2,
-                'numberofcolors':16,
+                'colorsampling': 0,
+                'numberofcolors':25,
                 'mincolorratio': 0,
                 'colorquantcycles':1,
                 'layering': 0,
@@ -292,7 +292,7 @@ class ImageToSVGConverter():
             self.debug_all_layer+=f'<tr><td>Layer:{cnt}</td>'
             for w in h:
                 col = w
-                a=self.torgbastr(ii.palette[col])
+                a=self.torgbastr(ii['palette'][col])
                 self.debug_all_layer += f'<td style="width:20px;height:20px;background-color:{a};">{col}</td>'
             self.debug_all_layer+='</tr>'
             cnt = cnt + 1
@@ -313,7 +313,7 @@ class ImageToSVGConverter():
             for w in h:
                 #print(w)
                 col = w
-                a=self.torgbastr(ii.palette[col])
+                a=self.torgbastr(ii['palette'][col])
                 self.debug_all_layer += f'<td style="width:20px;height:20px;background-color:{a};">{col}</td>'
             self.debug_all_layer+='</tr>'
             cnt = cnt + 1
@@ -332,7 +332,7 @@ class ImageToSVGConverter():
        
        # set image data
        imgd = Dict()
-       imgd.width,imgd.height = list(bin_data.size)
+       imgd['width'],imgd['height'] = list(bin_data.size)
        
        #list(image.getdata())  RGBA tuple -> list
        '''
@@ -343,11 +343,12 @@ class ImageToSVGConverter():
        print('bindata: ',time.time() - st)
               
        raw = bin_data.getdata() # tuple
-       imgd.data = [ second for first in raw for second in first ] # flatten tuple
+       imgd['data'] = [ second for first in raw for second in first ] # flatten tuple
        
        print('Read_Img finshed: ',time.time() - st)
        # set options and make svg data
        options = self.checkoptions(set_option)
+       if (options['lineart'] == True) and (options['strokewidth'] <= 0): options['strokewidth'] = 1
        td = self.imagedataToTracedata(imgd, options )
        svgdata = self.getsvgstring(td, options,True)
        
@@ -359,34 +360,34 @@ class ImageToSVGConverter():
         # ii = -1,1,0 sheet map
         ii = self.colorquantization(imgd, options)
         mode = ['Sequential layering mode(Layering:0)', 'Pallalel layering mode(Layering:1)']
-        print(mode[options.layering])
+        print(mode[options['layering']])
         if options.layering == 0:
             # Sequential layering
             # create tracedata object
-            ii_array = ii.array
-            ii_palette = ii.palette
+            ii_array = ii['array']
+            ii_palette = ii['palette']
             tracedata = Dict({
                 'layers' : [],
                 'palette' : ii_palette,
                 'width' : len(ii_array[0]) - 2,
                 'height': len(ii_array) - 2
                 })
-            tracedata_layers_append = tracedata.layers.append
+            tracedata_layers_append = tracedata['layers'].append
             # Loop to trace each color layer
             print('Points data crete: ',time.time() - st)
             colornum = 0
             #self.debug_e(ii.palette)
-            for colornum in range(0,len(ii.palette)):
+            for colornum in range(0,len(ii_palette)):
                 # layeringstep -> pathscan -> internodes -> batchtracepaths
                 s_lay = self.layeringstep(ii, colornum)
                 #print(s_lay)
                 #self.debug_e2(p_lay,ii,colornum)
-                p_lay = self.pathscan(s_lay, options.pathomit)
+                p_lay = self.pathscan(s_lay, options['pathomit'])
                 #print(p_lay)
                 i_lay = self.internodes(p_lay, options)
                 #print(i_lay)
 
-                tracedlayer = self.batchtracepaths(i_lay, options.ltres, options.qtres)
+                tracedlayer = self.batchtracepaths(i_lay, options['ltres'], options['qtres'])
                 #tracedlayer = self.batchtracepaths(self.internodes(self.pathscan(self.layeringstep(ii, colornum), options.pathomit), options), options.ltres, options.qtres)
                 # adding traced layer
                 #print(tracedlayer)
@@ -398,18 +399,18 @@ class ImageToSVGConverter():
             ls = self.layering(ii)
             # Optional edge node visualization
             if options.layercontainerid:
-                self.drawLayers(ls, self.specpalette, options.scale, options.layercontainerid)
+                self.drawLayers(ls, self.specpalette, options['scale'], options['layercontainerid'])
             # 3. Batch pathscan(Dict)
-            bps = self.batchpathscan(ls, options.pathomit)
+            bps = self.batchpathscan(ls, options['pathomit'])
             # 4. Batch interpollation(Dict)
             bis = self.batchinternodes(bps, options)
             # 5. Batch tracing and creating tracedata object
             # batchtracelayers return []
             tracedata = Dict({
-                'layers': self.batchtracelayers(bis, options.ltres, options.qtres),
-                'palette': ii.palette,
-                'width': imgd.width,
-                'height': imgd.height
+                'layers': self.batchtracelayers(bis, options['ltres'], options['qtres']),
+                'palette': ii['palette'],
+                'width': imgd['width'],
+                'height': imgd['height']
                 })
         # End of parallel layering
         return tracedata
@@ -444,26 +445,37 @@ class ImageToSVGConverter():
 
     def colorquantization(self,imgd, options):
         arr = array.array('i',[]);#[]
+        copy_deepcopy = copy.deepcopy
+        
         idx = 0
         paletteacc = Dict()
-        w = imgd.width
-        h = imgd.height
-        pixelnum = w * h
         palette = Dict()
-        copy_deepcopy = copy.deepcopy
+        
+        idata = imgd['data']
+        w = imgd['width']
+        h = imgd['height']
+        pixelnum = w * h
+        
+        num_of_colors = options['numberofcolors']
+        sampling = options['colorsampling']
+        color_q_cycles = options['colorquantcycles']
+        if color_q_cycles <= 0:color_q_cycles = 1
+        cycle_limit = color_q_cycles - 1
+        min_col_ratio = options['mincolorratio']
+        
         # imgd.data must be RGBA, not just RGB
-        if len(imgd.data) < pixelnum * 4:
+        if len(idata) < pixelnum * 4:
             alloc = pixelnum * 4
             newimgddata = [0] * alloc
             #newimgddata = np.array(([0] * alloc),dtype='uint8') # Uint8,  ClampedArray?
             for pxcnt in range(0,pixelnum):
-                imgq = imgd.data[pxcnt*3:pxcnt*3+3]
+                imgq = idata[pxcnt*3:pxcnt*3+3]
                 p4 = pxcnt*4
                 newimgddata[p4] = imgq[0]
                 newimgddata[p4 + 1] = imgq[1]
                 newimgddata[p4 + 2] = imgq[2]
                 newimgddata[p4 + 3] = 255
-            imgd.data = newimgddata
+            imgd['data'] = newimgddata
         # End of RGBA imgd.data check
         # Filling arr (color index array) with -1
         print(f'Image size = height:{imgd.height}px * width:{imgd.width}px')
@@ -472,27 +484,24 @@ class ImageToSVGConverter():
         
         # Use custom palette if pal is defined or sample / generate custom length palette
         # parette is Dict() object
-        if options.pal:palette = options.pal
-        elif options.colorsampling == 0:palette = self.generatepalette(options.numberofcolors)
-        elif options.colorsampling == 1:palette = self.samplepalette(options.numberofcolors, imgd)
-        else:palette = self.samplepalette2(options.numberofcolors, imgd)
+        if options['pal']:palette = options['pal']
+        elif sampling == 0:palette = self.generatepalette(num_of_colors)
+        elif sampling == 1:palette = self.samplepalette(num_of_colors, imgd)
+        else:palette = self.samplepalette2(num_of_colors, imgd)
         
         # Selective Gaussian blur preprocessing
-        if options.blurradius > 0:
-            imgd = self.blur( imgd, options.blurradius, options.blurdelta )
+        if options['blurradius'] > 0:
+            imgd = self.blur( imgd, options['blurradius'], options['blurdelta'] )
         # Repeat clustering step options.colorquantcycles times
         print('createPalette: ',time.time() - st)
+        
+        plen = len(palette)
         idt_palette = Dict()
-        idt_palette = [ Dict({'r': 0,'g': 0,'b': 0,'a': 0,'n': 0 }) for i in range(0,len(palette)) ]
+        idt_palette = [ Dict({'r': 0,'g': 0,'b': 0,'a': 0,'n': 0 }) for _ in range(0,plen) ]
         
         print('Pixel Analysis: ',time.time() - st)
-        
-        cycle_limit = options.colorquantcycles - 1
-        min_col_ratio = options.mincolorratio
-        plen = len(palette)
-        
-        idata = imgd.data
-        for cnt in range(0,options.colorquantcycles):
+        idata = imgd['data']
+        for cnt in range(0,color_q_cycles):
             # Average colors from the second iteration
             if cnt > 0:
                 # This indent fixed
@@ -504,37 +513,39 @@ class ImageToSVGConverter():
                     #print( paletteacc )
                     kpal = paletteacc[k]
                     n = kpal['n']
-                    if n > 0:
-                        palette[k] = self.ret_pal(kpal['r'],kpal['g'],kpal['b'],kpal['a'],n)
-
+                    if n:palette[k] = self.ret_pal(kpal['r'],kpal['g'],kpal['b'],kpal['a'],n)
                     # Randomizing a color, if there are too few pixels and there will be a new cycle len(paletteacc[k])>0 and 
-                    if (n / pixelnum < min_col_ratio) and (cnt < cycle_limit):
+                    elif (n / pixelnum < min_col_ratio) and (cnt < cycle_limit):
                         palette[k] =Dict({
-                            'r': floor(randint(0, 255)),
-                            'g': floor(randint(0, 255)),
-                            'b': floor(randint(0, 255)),
-                            'a': floor(randint(0, 255))
+                            'r': randint(0, 255),
+                            'g': randint(0, 255),
+                            'b': randint(0, 255),
+                            'a': randint(0, 255)
                             })
             # End of palette loop
             # End of Average colors from the second iteration
             # Reseting palette accumulator for averaging
             print('Quantize Cycle',cnt,"_",time.time() - st)
-            
             paletteacc=copy_deepcopy(idt_palette)
-
             for ｊ in range(0,h):
                 for i in range(0,w):
                     # pixel index
                     idx = (j * w + i) * 4
                     # find closest color from palette by measuring (rectilinear) color distance between this pixel and all palette colors
-                    ci = cd = 0;cdl = 1024;# 4 * 256 is the maximum RGBA distance 
+                    ci = 0;cdl = 1024;# 4 * 256 is the maximum RGBA distance 
                     q0,q1,q2,q3 = idata[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
 
                     for k in range(0,plen):
                         # In my experience, https://en.wikipedia.org/wiki/Rectilinear_distance works better than https://en.wikipedia.org/wiki/Euclidean_distance
                         kpal = palette[k]
-                        cd = self.min_max(kpal['r'],kpal['g'],kpal['b'],kpal['a'],q0,q1,q2,q3) # bottle neck (3.1sec)
-                        #cd = self.min_max(kpal.r,kpal.g,kpal.b,kpal.a,q0,q1,q2,q3) # bottle neck (10.8sec)
+                        cd = self.min_max(kpal['r'],kpal['g'],kpal['b'],kpal['a'],q0,q1,q2,q3) # bottle neck fixed(3.1sec)
+                        """
+                        c1 = kpal['r']- q0 if kpal['r'] > q0 else q0 - kpal['r']
+                        c2 = kpal['g']- q1 if kpal['g'] > q1 else q1 - kpal['g']
+                        c3 = kpal['b']- q2 if kpal['b'] > q2 else q2 - kpal['b']
+                        c4 = kpal['a']- q3 if kpal['a'] > q3 else q3 - kpal['a']
+                        cd = int(c1 + c2 + c3 + c4)
+                        """
                         # Remember this color if this is the closest yet
                         if cd < cdl:cdl = cd;ci = k;
                     # End of palette loop
@@ -551,7 +562,7 @@ class ImageToSVGConverter():
         # End of cnt loop
         return Dict({ 'array':arr, 'palette':palette })
 
-    @lru_cache(maxsize=1000)
+    @lru_cache(maxsize=1024)
     def ret_pal(self,r,g,b,a,n):
         return Dict({
             'r': floor(r / n),
@@ -563,16 +574,15 @@ class ImageToSVGConverter():
 
     @lru_cache(maxsize=1024)
     def min_max(self,r,g,b,a,q0,q1,q2,q3):
-        c1 = (max([r, q0]) - min([r, q0]))+(max([g, q1]) - min([g, q1]))+(max([b, q2]) - min([b, q2]))+(max([a, q3]) - min([a, q3]))
-        return int(c1)
+        return (max([r, q0]) - min([r, q0]))+(max([g, q1]) - min([g, q1]))+(max([b, q2]) - min([b, q2]))+(max([a, q3]) - min([a, q3]))# int() 
 
     # Sampling a palette from imagedata
     def samplepalette(self,numberofcolors,imgd):
-        idx,palette = 0,Dict()
-        imgseed = len(imgd.data)/4
+        idx=0;palette=Dict();
+        imgseed = len(imgd['data'])/4
         for i in range(0,numberofcolors):
-            idx = floor(randint(0, imgseed)) * 4
-            imgq = imgd.data[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
+            idx = randint(0, imgseed) * 4
+            imgq = imgd['data'][idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
             palette[i]=Dict({
                 'r': imgq[0],
                 'g': imgq[1],
@@ -588,18 +598,18 @@ class ImageToSVGConverter():
         palette = Dict()
         ni = ceil(sqrt(numberofcolors))
         nj = ceil(numberofcolors / ni)
-        w = imgd.width
+        w = imgd['width']
         vx = w / (ni + 1)
-        vy = imgd.height / (nj + 1)
+        vy = imgd['height'] / (nj + 1)
         l = len(palette)
-        idata = imgd.data
+        idata = imgd['data']
         for j in range(0,nj):
             for i in range(0,nj):
                 if l == numberofcolors:
                     break
                 else:
                     idx = floor((j + 1) * vy * w + (i + 1) * vx) * 4
-                    imgq = idata[idx:idx+4]# get a list of imgd.data[idx] to imgd.data[idx + 3]
+                    imgq = idata[idx:idx+3]# get a list of imgd.data[idx] to imgd.data[idx + 3]
                     palette[pdx]=Dict({
                         'r': imgq[0],
                         'g': imgq[1],
@@ -654,14 +664,16 @@ class ImageToSVGConverter():
             # Rest is random
             for rcnt in range(0,rndnum):
                 palette[pdx]=Dict({
-                    'r': floor(randint(0, 255)),
-                    'g': floor(randint(0, 255)),
-                    'b': floor(randint(0, 255)),
+                    'r': randint(0, 255),
+                    'g': randint(0, 255),
+                    'b': randint(0, 255),
                     'a': 255 #floor(randint(0, 255))
                 })
                 pdx = pdx + 1
         # End of numberofcolors check
         return palette
+
+
 
     # 2. Layer separation and edge detection
     # Edge node types ( ▓: this layer or 1; ░: not this layer or 0 )
@@ -673,12 +685,10 @@ class ImageToSVGConverter():
         # Creating layers for each indexed color in arr
         # This function use when layer = 1 (Old way)
         layers = []
-        val = 0
-        ii_array = ii.array
+        ii_array = ii['array']
         ah = len(ii_array)
         aw = len(ii_array[0])
         ak = len(ii['palette'])
-        n1=n2=n3=n4=n5=n6=n7=n8=0
         # Create layers
         # 3 Dimension array
         layers = [[[0] * aw for _ in range(0, ah)]for _ in range(0, ak)]
@@ -690,6 +700,7 @@ class ImageToSVGConverter():
                 val = ii_array[j][i]
                 
                 # Are neighbor pixel colors the same?
+                
                 n1 = 1 if ii_array[j - 1][i - 1] == val else 0
                 n2 = 1 if ii_array[j - 1][i    ] == val else 0
                 n3 = 1 if ii_array[j - 1][i + 1] == val else 0
@@ -708,6 +719,8 @@ class ImageToSVGConverter():
         # End of j loop
         return layers
 
+
+
     # 2. Layer separation and edge detection
     # Edge node types ( ▓: this layer or 1; ░: not this layer or 0 )
     # 12  ░░  ▓░  ░▓  ▓▓  ░░  ▓░  ░▓  ▓▓  ░░  ▓░  ░▓  ▓▓  ░░  ▓░  ░▓  ▓▓
@@ -716,9 +729,9 @@ class ImageToSVGConverter():
 
     def layeringstep(self,ii, cnum):
         # Creating layers for each indexed color in arr
-        layer = []
-        val = 0
-        ii_array = ii.array
+        #layer = []
+        layer = array.array('i',[]);
+        ii_array = ii['array']
         ah = len(ii_array)
         aw = len(ii_array[0])
 
@@ -727,7 +740,6 @@ class ImageToSVGConverter():
         #layer = np.full((ah, aw), 0)
 
         # Looping through all pixels and calculating edge node type
-        c0=c1=c2=c3=0
         for j in range(1,ah):
             for i in range(1,aw):
                 c0 = 1 if ii_array[j - 1][i - 1] == cnum else 0
@@ -749,16 +761,17 @@ class ImageToSVGConverter():
                 j = max_pa - 1
             else:
                 j = i - 1
-            pajx = pa[j]['x'];pajy = pa[j]['y'];paix = pa[i]['x'];paiy = pa[i]['y'];
-            
+            pajx = pa[j]['x'];pajy = pa[j]['y'];
+            paix = pa[i]['x'];paiy = pa[i]['y'];
+            px = p['x'];py = p['y']
             # zero divide check
-            m1 = (pajx - paix) * (p['y'] - paiy)
+            m1 = (pajx - paix) * (py - paiy)
             m2 = (pajy - paiy)
             
-            if m1 == 0:m1 = 0.1#print('zerodiv', f'{pajx} - {paix} * {p.y} - {paiy}')
-            if m2 == 0:m2 = 0.1#print('zerodiv2', f'{pajy} - {paiy}') 
+            if m1 == 0:m1 = 0.01#print('zerodiv', f'{pajx} - {paix} * {p.y} - {paiy}')
+            if m2 == 0:m2 = 0.01#print('zerodiv2', f'{pajy} - {paiy}') 
             #if pa[i].y > p.y != pa[j].y > p.y and p.x < (pa[j].x - (pa[i].x)) * (p.y - (pa[i].y)) / (pa[j].y - (pa[i].y)) + pa[i].x:
-            if ((paiy > p['y']) != (pajy > p['y'])) and (p['x'] < (m1 / m2 + paix)):
+            if ((paiy > py) != (pajy > py)) and (px < (m1 / m2 + paix)):
                 isin = not isin
             else:
                 isin = isin
@@ -792,14 +805,14 @@ class ImageToSVGConverter():
                         # New path point
                         pxbk = px - 1;
                         pybk = py - 1;
-                        paths[pacnt].points[pcnt] = Dict({ 'x' : pxbk, 'y' : pybk, 't': arr[py][px] })
+                        paths[pacnt]['points'][pcnt] = Dict({ 'x' : pxbk, 'y' : pybk, 't': arr[py][px] })
                         
                         # Bounding box
                         bb = paths[pacnt]['boundingbox']
-                        if pxbk < bb[0]: paths[pacnt].boundingbox[0] = pxbk
-                        if pxbk > bb[2]: paths[pacnt].boundingbox[2] = pxbk
-                        if pybk < bb[1]: paths[pacnt].boundingbox[1] = pybk
-                        if pybk > bb[3]: paths[pacnt].boundingbox[3] = pybk
+                        if pxbk < bb[0]: paths[pacnt]['boundingbox'][0] = pxbk
+                        if pxbk > bb[2]: paths[pacnt]['boundingbox'][2] = pxbk
+                        if pybk < bb[1]: paths[pacnt]['boundingbox'][1] = pybk
+                        if pybk > bb[3]: paths[pacnt]['boundingbox'][3] = pybk
                         # Next: look up the replacement, direction and coordinate changes = clear this cell, turn if required, walk forward
                         lookuprow = self.pathscan_combined_lookup[arr[py][px]][dir]
                         
@@ -810,7 +823,7 @@ class ImageToSVGConverter():
                         py = py + lookuprow[3]
                         
                         # Close path
-                        if ((px - 1) == paths[pacnt].points[0]['x']) and ((py - 1) == paths[pacnt].points[0]['y']):
+                        if ((px - 1) == paths[pacnt]['points'][0]['x']) and ((py - 1) == paths[pacnt]['points'][0]['y']):
                             pathfinished = True
                             # Discarding paths shorter than pathomit
                             if len(paths[pacnt]['points']) < pathomit:
@@ -823,7 +836,7 @@ class ImageToSVGConverter():
                                 if holepath == True:
                                     parentidx = 0
                                     parentbbox = [-1,-1,w+1,h+1]
-                                    pts0 = paths[pacnt].points[0] # Dict()
+                                    pts0 = paths[pacnt]['points'][0] # Dict()
                                     pc = paths[pacnt]['boundingbox'] # list()
                                     for parentcnt in range(0,pacnt):
                                         prc = paths[parentcnt]['boundingbox'] # list()
@@ -860,7 +873,7 @@ class ImageToSVGConverter():
     def internodes(self,paths, options):
         ins = Dict()
         palen=nextidx=nextidx2=previdx=previdx2=0;
-        opt_r_angle_ehnc = options.rightangleenhance
+        opt_r_angle_ehnc = options['rightangleenhance']
         # paths loop
         for pacnt in range(0,len(paths)):
             path_pacnt = paths[pacnt]
@@ -887,11 +900,11 @@ class ImageToSVGConverter():
                 ppps_next_y = paths_pacnt_points[nextidx]['y']
                 
                 # right angle enhance
-                if opt_r_angle_ehnc and self.testrightangle(path_pacnt, previdx2, previdx, pcnt, nextidx, nextidx2):
+                if opt_r_angle_ehnc and self.testrightangle(paths_pacnt_points, previdx2, previdx, pcnt, nextidx, nextidx2):
                     # Fix previous direction
                     ipcp_last = len(ins[pacnt]['points']) - 1
                     if ipcp_last > 0:
-                        ins[pacnt].points[ipcp_last]['linesegment'] = self.getdirection(ins[pacnt].points[ipcp_last]['x'], ins[pacnt].points[ipcp_last]['y'], pppsx, pppsy)
+                        ins[pacnt]['points'][ipcp_last]['linesegment'] = self.getdirection(ins[pacnt]['points'][ipcp_last]['x'], ins[pacnt]['points'][ipcp_last]['y'], pppsx, pppsy)
                     # This corner point
                     ins_pacnt_append(Dict({
                         'x': pppsx,
@@ -909,8 +922,7 @@ class ImageToSVGConverter():
         # End of paths loop
         return ins
 
-    def testrightangle(self,path, idx1, idx2, idx3, idx4, idx5):
-        ppts = path.points
+    def testrightangle(self,ppts, idx1, idx2, idx3, idx4, idx5):
         return ((ppts[idx3]['x'] == ppts[idx1]['x']) and (ppts[idx3]['x'] == ppts[idx2]['x']) and (ppts[idx3]['y'] == ppts[idx4]['y']) and (ppts[idx3]['y'] == ppts[idx5]['y'])) or ((ppts[idx3]['y'] == ppts[idx1]['y']) and (ppts[idx3]['y'] == ppts[idx2]['y']) and (ppts[idx3]['x'] == ppts[idx4]['x']) and (ppts[idx3]['x'] == ppts[idx5]['x']))
 
     @lru_cache(maxsize=1000)
@@ -950,21 +962,23 @@ class ImageToSVGConverter():
 
     def tracepath(self,path, ltres, qtres):
         pcnt = seqend = 0;segtype1=segtype2='';smp = Dict();
-        smp.segments = []
-        smp.boundingbox = path.boundingbox
-        smp.holechildren = path.holechildren
-        smp.isholepath = bool(path.isholepath)
-        smp_segments_append = smp.segments.append
-        pcnt_max = len(path.points)
+        smp['segments'] = []
+        smp['boundingbox'] = path['boundingbox']
+        smp['holechildren'] = path['holechildren']
+        smp['isholepath'] = bool(path['isholepath'])
+        smp_segments_append = smp['segments'].append
+        
+        path_pts = path['points']
+        pcnt_max = len(path_pts)
         while pcnt < pcnt_max:
             # 5.1. Find sequences of points with only 2 segment types
-            segtype1 = path.points[pcnt]['linesegment']
+            segtype1 = path_pts[pcnt]['linesegment']
             segtype2 = -1
             seqend = pcnt + 1
             
-            while ((path.points[seqend]['linesegment'] == segtype1) or (path.points[seqend]['linesegment'] == segtype2) or (segtype2 == -1)) and (seqend < pcnt_max - 1):
-                if (path.points[seqend]['linesegment'] != segtype1) and (segtype2 == -1):
-                    segtype2 = path.points[seqend]['linesegment']
+            while ((path_pts[seqend]['linesegment'] == segtype1) or (path_pts[seqend]['linesegment'] == segtype2) or (segtype2 == -1)) and (seqend < pcnt_max - 1):
+                if (path_pts[seqend]['linesegment'] != segtype1) and (segtype2 == -1):
+                    segtype2 = path_pts[seqend]['linesegment']
                 seqend = seqend + 1
             if seqend == pcnt_max - 1:seqend = 0
             # 5.2. - 5.6. Split sequence and recursively apply 5.2. - 5.6. to startpoint-splitpoint and splitpoint-endpoint sequences
@@ -991,7 +1005,7 @@ class ImageToSVGConverter():
             if seqend > 0:
                 pcnt = seqend
             else:
-                pcnt = len(path.points)
+                pcnt = len(path_pts)
         # End of pcnt loop
         return smp
 
@@ -1001,29 +1015,30 @@ class ImageToSVGConverter():
     def fitseq(self, path, ltres, qtres, seqstart, seqend ):
         # return if invalid seqend
         # print("Seq St", seqstart,"Seq En",seqend)
-        path_points_len = len(path.points)
         
+        path_points_len = len(path['points'])
         if (seqend > path_points_len) or (seqend < 0):return Dict()
+        
         # variables
+        path_pts = path['points']
+
         errorpoint = seqstart;
         curvepass = True
         px=py=errorval=0;dist2 = None;
         tl = seqend - seqstart
         if tl < 0:tl = tl + path_points_len
-        en = path.points[seqend]
-        st = path.points[seqstart]
-        st_x = st['x'];st_y = st['y'];
-        en_x = en['x'];en_y = en['y'];
+        
+        st_x = path_pts[seqstart]['x'];st_y = path_pts[seqstart]['y'];
+        en_x = path_pts[seqend]['x'];en_y = path_pts[seqend]['y'];
         vx = (en_x - st_x) / tl
         vy = (en_y - st_y) / tl
         # 5.2. Fit a straight line on the sequence
-        pcnt = (seqstart + 1) % path_points_len;pl = 0;
+        pcnt = (seqstart + 1) % path_points_len;
         while pcnt != seqend:
             pl = pcnt - seqstart
             if pl < 0:pl = pl + path_points_len
             px = st_x + vx * pl;py = st_y + vy * pl
-            ppcnt = path.points[pcnt]
-            pcpx = ppcnt['x'] - px;pcpy = ppcnt['y'] - py;
+            pcpx =path_pts[pcnt]['x'] - px;pcpy = path_pts[pcnt]['y'] - py;
             dist2 = pcpx * pcpx + pcpy * pcpy
             if dist2 > ltres:curvepass = False
             if dist2 > errorval:errorpoint = pcnt;errorval = dist2;
@@ -1047,8 +1062,8 @@ class ImageToSVGConverter():
         t1 = (1 - t) * (1 - t)
         t2 = 2 * (1 - t) * t
         t3 = t * t
-        cpx = (t1 * st_x + t3 * en_x - path.points[fitpoint]['x']) / -t2
-        cpy = (t1 * st_y + t3 * en_y - path.points[fitpoint]['y']) / -t2
+        cpx = (t1 * st_x + t3 * en_x - path_pts[fitpoint]['x']) / -t2
+        cpy = (t1 * st_y + t3 * en_y - path_pts[fitpoint]['y']) / -t2
         # Check every point
         pcnt = seqstart + 1
         while pcnt != seqend:
@@ -1058,8 +1073,7 @@ class ImageToSVGConverter():
             t3 = t * t
             px = t1 * st_x + t2 * cpx + t3 * en_x
             py = t1 * st_y + t2 * cpy + t3 * en_y
-            ppcnt = path.points[pcnt]
-            pcpx = ppcnt['x'] - px;pcpy = ppcnt['y'] - py;
+            pcpx = path_pts[pcnt]['x'] - px;pcpy = path_pts[pcnt]['y'] - py;
             dist2 = pcpx * pcpx + pcpy * pcpy
             if dist2 > qtres:curvepass = False
             if dist2 > errorval:errorpoint = pcnt;errorval = dist2;
@@ -1106,7 +1120,6 @@ class ImageToSVGConverter():
     #//  SVG Drawing functions
     #//
     #////////////////////////////////////////////////////////////
-
     def get_xy(self,d,num,ops,roundc):
         # options_roundcoords == -1: not use  roundtodec 0
         if roundc == -1:
@@ -1115,10 +1128,10 @@ class ImageToSVGConverter():
             return self.roundtodec(d[f'x{num}'] * ops,1) , self.roundtodec(d[f'y{num}'] * ops,1)
 
     # Rounding to given decimals https://stackoverflow.com/questions/11832914/round-to-at-most-2-decimal-places-in-javascript
+    #@lru_cache(maxsize=16)
     def roundtodec(self,val, places):
-        if val < 0: val = val * -1
-        fmt = '{:.'+str(places)+'f}'
-        return str(fmt.format(val))
+        #fmt = '{:.'+str(places)+'f}'
+        return f'{{:.{places}f}}'.format(val)
     
     def cond_(self,obj,tr,el):
         if obj:return tr
@@ -1126,51 +1139,54 @@ class ImageToSVGConverter():
     
     def svgpathstring(self,tracedata, lnum, pathnum, options):
         hcnt = 0;hsmp = 0;
-        layer = tracedata.layers[lnum]
+        layer = tracedata['layers'][lnum]
         smp = layer[pathnum]
-        smp_seg_max = len(smp.segments)
-        ops = options.scale
+        smp_seg = smp['segments']
+        smp_seg_max = len(smp_seg)
+        ops = options['scale']
         # Line filter
-        if (options.linefilter and (smp_seg_max < 3)):return ''
+        if (options['linefilter'] == True and (smp_seg_max < 3)):return ''
         # print('Segment_Length',smp_seg_max)
         
         # Starting path element, desc contains layer and path number
         #str = '<path ' + self.cond_(options.desc,f'desc="l {lnum} p {pathnum}" ', '') + self.tosvgcolorstr(tracedata.palette[lnum], options) + 'd="'
 
         str = ''.join(['<path ',
-                self.cond_(options.desc,f'desc="l {lnum} p {pathnum}" ', ''),
-                self.tosvgcolorstr(tracedata.palette[lnum], options),
+                self.cond_(options['desc'],f'desc="l {lnum} p {pathnum}" ', ''),
+                #self.tosvgcolorstr(tracedata['palette'][lnum]['r'],tracedata['palette'][lnum]['g'],tracedata['palette'][lnum]['b'],tracedata['palette'][lnum]['a'], options['strokewidth'],options['lineart']),
+                 self.tosvgcolorstr2(tracedata['palette'][lnum], options),
                 'd="'
                 ])
 
         # Creating non-hole path string
         # options_roundcoords == -1 is not use self.roundtodec()
-        roundc = options.roundcoords
-        xx1,yy1 = self.get_xy(smp.segments[0],1,ops,roundc)
+        roundc = options['roundcoords']
+        xx1,yy1 = self.get_xy(smp_seg[0],1,ops,roundc)
         str += f'M {xx1} {yy1} '
 
         for pcnt in range(0,smp_seg_max):
-            tp = smp.segments[pcnt].type
-            xx2,yy2 = self.get_xy(smp.segments[pcnt],2,ops,roundc)
+            tp = smp_seg[pcnt]['type']
+            xx2,yy2 = self.get_xy(smp_seg[pcnt],2,ops,roundc)
             str += f'{tp} {xx2} {yy2} '
-            if smp.segments[pcnt].get('x3', None) != None:
-                xx3,yy3 = self.get_xy(smp.segments[pcnt],3,ops,roundc)
+            if smp_seg[pcnt].get('x3', None) != None:
+                xx3,yy3 = self.get_xy(smp_seg[pcnt],3,ops,roundc)
                 str += f'{xx3} {yy3} '
         str += 'Z '
 
         # End of creating non-hole path string
         # Hole children
         #print("Sample:",layer[0])
-        hcnt_max=len(smp.holechildren)
+        hcnt_max=len(smp['holechildren'])
         for hcnt in range(0,hcnt_max):
             #print("Check:",hcnt, "layer_length",len(layer))
-            hsmp = layer[ smp.holechildren[hcnt] ]
-            hsmp_seg_total = len(hsmp.segments) - 1
-            seglast = hsmp.segments[hsmp_seg_total]
+            hsmp = layer[ smp['holechildren'][hcnt] ]
+            hsmp_seg = hsmp['segments']
+            hsmp_seg_total = len(hsmp_seg) - 1
+            seglast = hsmp_seg[hsmp_seg_total]
             # workaround
             # print("Segment_length at hole", hsmp_seg_total)
             # options_roundcoords == -1 is not use self.roundtodec()
-            roundc = options.roundcoords
+            roundc = options['roundcoords']
             if seglast.get('x3', None) != None:
                 xx3,yy3 = self.get_xy(seglast,3,ops,roundc)
                 str += f'M {xx3} {yy3} '
@@ -1178,13 +1194,13 @@ class ImageToSVGConverter():
                 xx2,yy2 = self.get_xy(seglast,2,ops,roundc)
                 str += f'M {xx2} {yy2} '
             #pcnt = hsmp_seg_total
-            for pcnt in range(hsmp_seg_total,-1,-1):# hsmp_seg_total to 0
+            for pcnt in range(hsmp_seg_total,-1,-1):# reversed(range(hsmp_seg_total+1)) hsmp_seg_total to 0
             # while pcnt >= 0:
-                str += hsmp.segments[pcnt].type + ' '
-                if hsmp.segments[pcnt].get('x3', None) != None:
-                    xx2,yy2 = self.get_xy(hsmp.segments[pcnt],2,ops,roundc)
+                str += hsmp_seg[pcnt]['type'] + ' '
+                if hsmp_seg[pcnt].get('x3', None) != None:
+                    xx2,yy2 = self.get_xy(hsmp_seg[pcnt],2,ops,roundc)
                     str += f'{xx2} {yy2} '
-                xx1,yy1 = self.get_xy(hsmp.segments[pcnt],1,ops,roundc)
+                xx1,yy1 = self.get_xy(hsmp_seg[pcnt],1,ops,roundc)
                 str += f'{xx1} {yy1} '
                 # pcnt = pcnt - 1
             # End of creating hole path string
@@ -1193,41 +1209,41 @@ class ImageToSVGConverter():
         # Closing path element
         str += '" />'
         # Rendering control points
-        opt_l = options.lcpr;opt_q = options.qcpr;
+        opt_l = options['lcpr'];opt_q = options['qcpr'];
         
         if (opt_l or opt_q):
             qc = opt_q * 0.2
             lc = opt_l * 0.2
-            pcnt_max = len(smp.segments)
+            pcnt_max = len(smp_seg)
             for pcnt in range(0,pcnt_max):
-                if smp.segments[pcnt].get('x3', None) != None and opt_q:
-                    xx2 = smp.segments[pcnt]['x2'] * ops;yy2 = smp.segments[pcnt]['y2'] * ops;
+                if smp_seg[pcnt].get('x3', None) != None and opt_q:
+                    xx2 = smp_seg[pcnt]['x2'] * ops;yy2 = smp_seg[pcnt]['y2'] * ops;
                     str += f'<circle cx="{xx2}" cy="{yy2}" r="{opt_q}" fill="cyan" stroke-width="{qc}" stroke="black" />'
                     
-                    xx3 = smp.segments[pcnt]['x3'] * ops;yy3 = smp.segments[pcnt]['y3'] * ops;
+                    xx3 = smp_seg[pcnt]['x3'] * ops;yy3 = smp_seg[pcnt]['y3'] * ops;
 
                     str += f'<circle cx="{xx3}" cy="{yy3}" r="{opt_q}" fill="white" stroke-width="{qc}" stroke="black" />'
                     
-                    xx1 = smp.segments[pcnt]['x1'] * ops;yy1 = smp.segments[pcnt]['y1'] * ops;
-                    xx2 = smp.segments[pcnt]['x2'] * ops;yy2 = smp.segments[pcnt]['y2'] * ops;
+                    xx1 = smp_seg[pcnt]['x1'] * ops;yy1 = smp_seg[pcnt]['y1'] * ops;
+                    xx2 = smp_seg[pcnt]['x2'] * ops;yy2 = smp_seg[pcnt]['y2'] * ops;
                     
                     str += f'<line x1="{xx1}" y1="{yy1}" x2="{xx2}" y2="{yy2}" stroke-width="{qc}" stroke="cyan" />'
                     
-                    xx2 = smp.segments[pcnt]['x2'] * ops;yy2 = smp.segments[pcnt]['y2'] * ops;
-                    xx3 = smp.segments[pcnt]['x3'] * ops;yy3 = smp.segments[pcnt]['y3'] * ops;
+                    xx2 = smp_seg[pcnt]['x2'] * ops;yy2 = smp_seg[pcnt]['y2'] * ops;
+                    xx3 = smp_seg[pcnt]['x3'] * ops;yy3 = smp_seg[pcnt]['y3'] * ops;
 
                     str += f'<line x1="{xx2}" y1="{yy2}" x2="{xx3}" y2="{yy3}" stroke-width="{qc}" stroke="cyan" />'
                 
-                if smp.segments[pcnt].get('x3', None) == None and opt_l:
-                    xx2 = smp.segments[pcnt]['x2'] * ops;yy2 = smp.segments[pcnt]['y2'] * ops;
+                if smp_seg[pcnt].get('x3', None) == None and opt_l:
+                    xx2 = smp_seg[pcnt]['x2'] * ops;yy2 = smp_seg[pcnt]['y2'] * ops;
                     str += f'<circle cx="{xx2}" cy="{yy2}" r="{opt_l}" fill="white" stroke-width="{lc}" stroke="black" />'
             # Hole children control points
-            hcnt_max = len(smp.holechildren)
+            hcnt_max = len(smp['holechildren'])
             for hcnt in range(0,hcnt_max):
-                hsmp = layer[smp.holechildren[hcnt]]
-                pcnt = 0;pcnt_max=len(hsmp.segments)
+                hsmp = layer[smp['holechildren'][hcnt]]
+                pcnt_max=len(hsmp_seg)
                 for pcnt in range(0,pcnt_max):
-                    hsp = hsmp.segments[pcnt]
+                    hsp = hsmp_seg[pcnt]
                     if ((hsp.get('x3', None) != None) and opt_q):
                         xx2 = hsp['x2'] * ops;yy2 = hsp['y2'] * ops;
                         str += f'<circle cx="{xx2}" cy="{yy2}" r="{opt_q}" fill="cyan" stroke-width="{qc}" stroke="black" />'
@@ -1253,10 +1269,10 @@ class ImageToSVGConverter():
 
     def getsvgstring (self,tracedata, options,flag):
         #options = self.checkoptions(options)
-        w = tracedata.width * options.scale
-        h = tracedata.height * options.scale
+        w = tracedata['width'] * options['scale']
+        h = tracedata['height'] * options['scale']
         # SVG start
-        if options.viewbox:
+        if options['viewbox']:
             vb = f'viewBox="0 0 {w} {h}" '
         else:
             vb = f'width="{w}" height="{h}" '
@@ -1264,21 +1280,24 @@ class ImageToSVGConverter():
         # Drawing: Layers and Paths loops
         svghead = '<svg ' + vb + 'version="1.1" xmlns="http://www.w3.org/2000/svg" desc="Created with imagetracer.js version ' + self.versionnumber + '" >'
         svgstr=''
-        tls = tracedata.layers
+        svdbody = []
+        svgbody_append = svdbody.append
+        tls = tracedata['layers']
         lcnt =len(tls) - 1
         while lcnt >= 0 :
             pcnt =len(tls[lcnt])-1
             while pcnt >= 0:
                 # Adding SVG <path> string
                 if not tls[lcnt][pcnt]['isholepath']:
-                    svgstr = svgstr + self.svgpathstring(tracedata, lcnt, pcnt, options)
+                    #svgstr = svgstr + self.svgpathstring(tracedata, lcnt, pcnt, options)
+                    svgbody_append( self.svgpathstring(tracedata, lcnt, pcnt, options) )
                 pcnt = pcnt - 1
             # End of paths loop
             lcnt = lcnt - 1
         # End of layers loop
         # SVG End
-        if flag==False:return svgstr
-        return ''.join([svghead , svgstr , '</svg>'])
+        if flag == False:return ''.join(svdbody)
+        return ''.join([svghead , ''.join(svdbody) , '</svg>'])
 
     # Comparator for numeric Array.sort
     def compareNumbers(self,a, b):
@@ -1289,15 +1308,26 @@ class ImageToSVGConverter():
         return f'''rgba({c['r']},{c['g']},{c['b']},{c.a})'''
 
     # Convert color object to SVG color string
-    def tosvgcolorstr(self,c, options):
-        sw = options.strokewidth
-        ld = options.lineart
-        op = c.a / 255.0
-        rgbcolor = f'''rgb({c['r']},{c['g']},{c['b']})'''
+    @lru_cache(maxsize=256)
+    def tosvgcolorstr(self,r,g,b,a,sw,ld):
+        # sw = options['strokewidth'],  ld = options['lineart']
+        op = a / 255.0
+        rgbcolor = f'rgb({r},{g},{b})'
         if ld == True:
-            if sw <= 0:sw = 1
             return f'fill="none" stroke="{rgbcolor}" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
         return f'fill="{rgbcolor}" stroke="{rgbcolor}" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
+
+
+    # Convert color object to SVG color string (original ver)
+    def tosvgcolorstr2(self,c,options):
+        sw = options['strokewidth'];ld = options['lineart'];
+        op = c['a'] / 255.0
+        rgbcolor = f'''rgb({c['r']},{c['g']},{c['b']})'''
+        if ld == True:
+            return f'fill="none" stroke="{rgbcolor}" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
+        return f'fill="{rgbcolor}" stroke="{rgbcolor}" stroke-width="{sw}"  paint-order="stroke" stroke-linejoin="round" opacity="{op}" '
+
+
 
     # HTML Helper function: Appending an <svg> element to a container from an svgstring
     def appendSVGString(svgstr, parentid):
@@ -1312,9 +1342,9 @@ class ImageToSVGConverter():
     def blur(self,imgd, radius, delta):
         i,j,k,d,idx = 0,0,0,0,0
         racc,gacc,bacc,aacc,wacc = 0,0,0,0,0
-        w = imgd.width
-        h = imgd.height
-        idata = imgd.data
+        w = imgd['width']
+        h = imgd['height']
+        idata = imgd['data']
         empdata = [0] * len(idata)
         # new ImageData
         imgd2 = Dict({
